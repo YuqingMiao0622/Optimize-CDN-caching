@@ -2,6 +2,7 @@ package LogStructured
 
 import (
 	"strconv"
+	//"fmt"
 	"fmt"
 )
 
@@ -10,11 +11,13 @@ const Epoch = 1000000
 var (
 	fragRatio 				float64
 	SealedBoxRatioTime		[]float64		// how sealed box ratio varies with time
+	SealedBoxNumber			[]int64
 	HitRatioTime			[]float64		// how hit ratio varies with time
 )
 
 func Request(id string, size string) {
 	numRequest++
+	getResultsWithTime()
 	DPrintf("New request with object id: %s and size: %s. Total requests: %d\n", id, size, numRequest)
 	object, err := strconv.Atoi(size)
 	objectSize := int64(object)
@@ -191,10 +194,18 @@ func addObjects(box *Box) {
 	DDPrintf("addObjects:: current cached objects: %d.\n", len(cachedObj))
 }
 
-func ResultsWithTime() {
+func getResultsWithTime() {
 	if numRequest % Epoch == 0 {
 		DPrintf("ResultsWithTime:: current number of requests is %d.\n", numRequest)
 		SealedBoxRatioTime = append(SealedBoxRatioTime, float64(numSeal) / float64(numRequest))
+		SealedBoxNumber = append(SealedBoxNumber, numSeal)
+		//length := len(SealedBoxNumber)
+		//if length != 0 {
+		//	SealedBoxNumber = append(SealedBoxNumber, numSeal - SealedBoxNumber[length - 1])
+		//} else {
+		//	SealedBoxNumber = append(SealedBoxNumber, numSeal)
+		//}
+
 		HitRatioTime = append(HitRatioTime, float64(hits) / float64(numRequest))
 	}
 }
@@ -210,7 +221,6 @@ func GetResults() (float64, float64, float64, float64) {
 		frag, numSeal, numRequest, hits, hitBytes, reqBytes)
 	fmt.Printf("frag: %d, fragRation: %f, numSeal: %d, numRequest: %d, hits: %d, hitBytes: %d, reqBytes: %d.\n",
 		frag, fragRatio, numSeal, numRequest, hits, hitBytes, reqBytes)
-	//WCR := float64(frag) / float64(numSeal * maxBoxSize)
 	WCR := fragRatio / float64(numSeal)
 	SBRR := float64(numSeal) / float64(numRequest)
 	HRR := float64(hits) / float64(numRequest)
