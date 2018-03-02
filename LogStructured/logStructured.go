@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"container/list"
 	"fmt"
-	//"awesomeProject/base"
 )
 
 /*
@@ -99,6 +98,11 @@ func StartUp(cacheSize int64, number int, upperBounds []int64) {
 	reqBytes = 0
 	cachedObj = make(map[string]int64)
 	fragRatio = 0
+
+	// new graph
+	HitRatioTime = make([]float64, 0)
+	SealedBoxRatioTime = make([]float64, 0)
+	SealedBoxNumber = make([]int64, 0)
 }
 
 /**
