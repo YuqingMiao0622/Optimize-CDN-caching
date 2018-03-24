@@ -2,17 +2,20 @@ package LogStructured
 
 import (
 	"strconv"
-	//"fmt"
 	"fmt"
 )
 
 const Epoch = 1000000
+//const Epoch = 1
 
 var (
+	MissBytes				int64
 	fragRatio 				float64
 	SealedBoxRatioTime		[]float64		// how sealed box ratio varies with time
 	SealedBoxNumber			[]int64
 	HitRatioTime			[]float64		// how hit ratio varies with time
+	HitBytesRatioTime		[]float64
+	MissBytesRatioTime		[]float64
 )
 
 func Request(id string, size string) {
@@ -72,6 +75,7 @@ func Request(id string, size string) {
 			}
 		} else {
 			DPrintf("Object %s is not found.\n", id)
+			MissBytes += objectSize
 			// If the box cannot hold this object (i.e. full??), seal it and add it to the flash
 			// i.e. the MRU position in hot queue. Then create a new open box to hold this object
 			if openBox.currSize + objectSize > maxBoxSize {
@@ -81,14 +85,14 @@ func Request(id string, size string) {
 
 				updateQueue2(openBox)
 				addObjects(openBox)
-				//sealedBoxes[openBox.upperBound] = append(sealedBoxes[openBox.upperBound], openBox.boxId)	// sealed
+				SealedBoxes[openBox.upperBound] = append(SealedBoxes[openBox.upperBound], openBox.boxId)	// sealed
 				frag += (maxBoxSize - openBox.currSize)
 				currFrag := float64(maxBoxSize - openBox.currSize) / float64(maxBoxSize)
 				fragRatio += currFrag
 				numSeal++
 				DPrintf("Box %d has been sealed. There are %d sealed boxes with upper bound %d. Sealed boxes: %d." +
 					" Fragmentation: %d.\n",
-					openBox.boxId, len(sealedBoxes[openBox.upperBound]), openBox.upperBound, numSeal, frag)
+					openBox.boxId, len(SealedBoxes[openBox.upperBound]), openBox.upperBound, numSeal, frag)
 
 				openBox = &Box{
 					boxId: 			nextBoxId,
@@ -207,6 +211,8 @@ func getResultsWithTime() {
 		//}
 
 		HitRatioTime = append(HitRatioTime, float64(hits) / float64(numRequest))
+		HitBytesRatioTime = append(HitBytesRatioTime, float64(hitBytes) / float64(reqBytes))
+		MissBytesRatioTime = append(MissBytesRatioTime, float64(MissBytes) / float64(reqBytes))
 	}
 }
 
@@ -227,3 +233,4 @@ func GetResults() (float64, float64, float64, float64) {
 	HBRR := float64(hitBytes) / float64(reqBytes)
 	return WCR, SBRR, HRR, HBRR
 }
+

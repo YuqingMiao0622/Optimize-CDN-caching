@@ -10,8 +10,9 @@ import (
 
  */
 
-//const maxBoxSize = 20
+//const maxBoxSize = 16
 const maxBoxSize = 104857600		// 100 MB
+
 
 type Object struct {
 	objectId 	string
@@ -41,7 +42,7 @@ var (
 	granularity		[]int64
 	openBoxes		map[int64]*Box	// upper bound --> open boxes
 	nextBoxId		int64				// record next box Id
-	sealedBoxes		map[int64][]int64	// upper bound --> all sealed boxes with the corresponding upper bound
+	SealedBoxes		map[int64][]int64	// upper bound --> all sealed boxes with the corresponding upper bound
 
 	// object id --> box id. For speeding up the code. Only the objects cached in the flash can be added into this map.
 	// Similarly, if one box is evicted from cold queue, then the objects in that box need to be removed from the map.
@@ -74,7 +75,7 @@ func StartUp(cacheSize int64, number int, upperBounds []int64) {
 	nextBoxId = 1
 	openBoxes = make(map[int64]*Box, number)
 	granularity = upperBounds 			// shadow copy or deep copy?
-	sealedBoxes = make(map[int64][]int64)
+	SealedBoxes = make(map[int64][]int64)
 	boxQueueMap = make(map[int64]*QueuePos)
 	for _, upperBound := range upperBounds {
 		newBox := &Box {
@@ -103,6 +104,9 @@ func StartUp(cacheSize int64, number int, upperBounds []int64) {
 	HitRatioTime = make([]float64, 0)
 	SealedBoxRatioTime = make([]float64, 0)
 	SealedBoxNumber = make([]int64, 0)
+	HitBytesRatioTime = make([]float64, 0)
+	MissBytesRatioTime = make([]float64, 0)
+	MissBytes = 0
 }
 
 /**
@@ -136,7 +140,7 @@ func NewRequest(id string, size string) {
 	// object is not in the open box
 	if !ok {
 		var sealed []int64
-		sealed, ok = sealedBoxes[bound]
+		sealed, ok = SealedBoxes[bound]
 		foundObject := false
 		// check whether it's in sealed boxes or not
 		if ok {
@@ -186,12 +190,12 @@ func NewRequest(id string, size string) {
 
 				updateQueue(openBox)
 
-				sealedBoxes[openBox.upperBound] = append(sealedBoxes[openBox.upperBound], openBox.boxId)	// sealed
+				SealedBoxes[openBox.upperBound] = append(SealedBoxes[openBox.upperBound], openBox.boxId)	// sealed
 				frag += (maxBoxSize - openBox.currSize)
 				numSeal++
 				DPrintf("Box %d has been sealed. There are %d sealed boxes with upper bound %d. Sealed boxes: %d." +
 					" Fragmentation: %d.\n",
-					openBox.boxId, len(sealedBoxes[openBox.upperBound]), openBox.upperBound, numSeal, frag)
+					openBox.boxId, len(SealedBoxes[openBox.upperBound]), openBox.upperBound, numSeal, frag)
 
 				openBox = &Box{
 					boxId: 			nextBoxId,
@@ -274,7 +278,7 @@ func updateSealedBoxes(box *Box) {
 	DPrintf("Before updating sealed boxes: ")
 	boxid := box.boxId		// bug: need to remove this box from sealed boxes map
 	upper := box.upperBound
-	boxes, ok := sealedBoxes[upper]
+	boxes, ok := SealedBoxes[upper]
 	DPrintf("%d.\n", boxes)
 	if ok {
 		for index, _ := range boxes {
@@ -284,7 +288,7 @@ func updateSealedBoxes(box *Box) {
 			}
 		}
 	}
-	sealedBoxes[upper] = boxes
+	SealedBoxes[upper] = boxes
 	DPrintf("After updating sealed boxes: ")
 	DPrintf("%d.\n", boxes)
 }
