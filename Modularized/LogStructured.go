@@ -26,6 +26,12 @@ type QueuePos struct {
 	hot     bool          // in hot queue or not
 }
 
+type GhostCache struct {
+	currSize		int64
+	accessCount		map[string]int
+	queue 			*list.List		// when ghost cache is full, evict some objects.
+}
+
 var (
 	hotQueue		*list.List		// holds box
 	coldQueue		*list.List
@@ -59,6 +65,11 @@ var (
 	HitRatioTime			[]float64		// how hit ratio varies with time
 	HitBytesRatioTime		[]float64
 	MissBytesRatioTime		[]float64
+
+
+	// dynamic granularity
+	count					map[float64]int		// map from power --> number of objects
+
 )
 
 /**
@@ -121,6 +132,7 @@ func basicSetUp() {
 	reqBytes = 0
 	cachedObj = make(map[string]int64)
 	validBoxes = make(map[int64]bool)
+	count = make(map[float64]int)
 }
 
 func timeSetUp() {
@@ -133,10 +145,14 @@ func timeSetUp() {
 	fragRatio = 0
 }
 
+/**
+	Deal with new command.
+ */
 func Request(id string, size string) {
 	//fmt.Printf("New request: %s with size %s.\n", id, size)
 	DPrintf("Request:: request object %s with size %s.\n", id, size)
 	numRequest++
+	collectStat(size)		// dynamic granularity
 	getResultsWithTime()
 	// convert size into integer
 	object, err := strconv.Atoi(size)
@@ -178,11 +194,15 @@ func Request(id string, size string) {
 
 }
 
+/**
+	Add one object into corresponding open box. First check whether open box is full or not.
+	If it is, add it the the MRU position in cold queue --> Update cold queue, then create a new
+	open box to hold this object. Otherwise, add it into the open box.
+ */
 func addToOpenBox(box *Box, objectSize int64, bound int64, id string) {
 	if box.currSize + objectSize > maxBoxSize {
 		// open box is full --> seal.
-		updateHotQueue(box)
-		//updateColdQueue(box) 		///---> BUG
+		updateColdQueue(box)
 		addObjects(box)
 		fragRatio += float64(maxBoxSize - box.currSize) / float64(maxBoxSize)
 		numSeal++
