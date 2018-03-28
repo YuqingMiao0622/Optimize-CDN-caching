@@ -85,14 +85,14 @@ func Request(id string, size string) {
 
 				updateQueue2(openBox)
 				addObjects(openBox)
-				SealedBoxes[openBox.upperBound] = append(SealedBoxes[openBox.upperBound], openBox.boxId)	// sealed
+				//SealedBoxes[openBox.upperBound] = append(SealedBoxes[openBox.upperBound], openBox.boxId)	// sealed
 				frag += (maxBoxSize - openBox.currSize)
 				currFrag := float64(maxBoxSize - openBox.currSize) / float64(maxBoxSize)
 				fragRatio += currFrag
 				numSeal++
-				DPrintf("Box %d has been sealed. There are %d sealed boxes with upper bound %d. Sealed boxes: %d." +
-					" Fragmentation: %d.\n",
-					openBox.boxId, len(SealedBoxes[openBox.upperBound]), openBox.upperBound, numSeal, frag)
+				//DPrintf("Box %d has been sealed. There are %d sealed boxes with upper bound %d. Sealed boxes: %d." +
+				//	" Fragmentation: %d.\n",
+				//	openBox.boxId, len(SealedBoxes[openBox.upperBound]), openBox.upperBound, numSeal, frag)
 
 				openBox = &Box{
 					boxId: 			nextBoxId,
@@ -198,18 +198,19 @@ func addObjects(box *Box) {
 	DDPrintf("addObjects:: current cached objects: %d.\n", len(cachedObj))
 }
 
+/**
+	Get results for different metrics every 1 million commands.
+	Output:	SealedBoxRatio: sealed box ratio (#sealed box / #requests) varies with time
+			SealedBoxNumber: number of sealed boxes
+			HitRatiotime: object hit ratio (#read hit / #requests)
+			HitBytesRatioTime: bytes hit ratio (# hit bytes / #requests)
+			MissBytesRatioTime: optional
+ */
 func getResultsWithTime() {
 	if numRequest % Epoch == 0 {
 		DPrintf("ResultsWithTime:: current number of requests is %d.\n", numRequest)
 		SealedBoxRatioTime = append(SealedBoxRatioTime, float64(numSeal) / float64(numRequest))
 		SealedBoxNumber = append(SealedBoxNumber, numSeal)
-		//length := len(SealedBoxNumber)
-		//if length != 0 {
-		//	SealedBoxNumber = append(SealedBoxNumber, numSeal - SealedBoxNumber[length - 1])
-		//} else {
-		//	SealedBoxNumber = append(SealedBoxNumber, numSeal)
-		//}
-
 		HitRatioTime = append(HitRatioTime, float64(hits) / float64(numRequest))
 		HitBytesRatioTime = append(HitBytesRatioTime, float64(hitBytes) / float64(reqBytes))
 		MissBytesRatioTime = append(MissBytesRatioTime, float64(MissBytes) / float64(reqBytes))

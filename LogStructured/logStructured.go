@@ -6,13 +6,8 @@ import (
 	"fmt"
 )
 
-/*
-
- */
-
 //const maxBoxSize = 16
 const maxBoxSize = 104857600		// 100 MB
-
 
 type Object struct {
 	objectId 	string
@@ -21,10 +16,9 @@ type Object struct {
 
 type Box struct {
 	boxId		int64					//
-	//objects		[]*Object			// hold objects with corresponding object size. Not required in simulation
 	currSize	int64					// record the current size of the box
 	upperBound	int64					// the upper bound of object size this box can hold
-	objOffsetMap map[string]int64		// map from object id to the offset where this object is stored.
+	objOffsetMap map[string]int64		// map from object id to the offset where this object is stored. --> not required in simulation
 }
 
 type QueuePos struct {
