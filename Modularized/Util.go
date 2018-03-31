@@ -4,6 +4,7 @@ import (
 	"os"
 	"log"
 	"container/list"
+	"fmt"
 )
 
 const flag = 0
@@ -13,8 +14,14 @@ var (
 	logger = log.New(log_file, "Log Structured----", log.Lshortfile | log.Lmicroseconds)
 )
 
+func DFmtPrintf(format string, v ...interface{}) {
+	if flag == 2 {
+		fmt.Printf(format, v...)
+	}
+}
+
 func DPrintf(format string, v ...interface{}) {
-	if flag > 0 {
+	if flag == 1 {
 		//fmt.Printf(format, v...)
 		logger.Printf(format, v...)
 	}
@@ -27,7 +34,7 @@ func DDPrintf(format string, v ...interface{}) {
 }
 
 func PrintQueue(queue *list.List, hot bool) {
-	if flag > 0 {
+	if flag == 1 {
 		if hot {
 			logger.Println("Current hot queue: ")
 		} else {
@@ -45,7 +52,7 @@ func PrintQueue(queue *list.List, hot bool) {
 
 func PrintElement(e *list.Element) {
 	box := e.Value.(*Box)
-	if flag > 0 {
+	if flag == 1 {
 		logger.Printf("Box id %d with upper bound %d holding %d items.\n",
 			box.boxId, box.upperBound, len(box.objOffsetMap))
 	}

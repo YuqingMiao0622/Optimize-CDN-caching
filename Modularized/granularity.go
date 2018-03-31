@@ -2,7 +2,6 @@ package ObjectBased
 
 import (
 	"strconv"
-	"fmt"
 	"os"
 	"log"
 	"bufio"
@@ -39,8 +38,6 @@ func collectStat(size string) {
 	count[power]++
 
 	if numRequest % Epoch == 0 {
-		//fmt.Println("Generate new granularity: ")
-		//fmt.Println(count)
 		DynamicGranularity(len(granularity))
 	}
 }
@@ -54,6 +51,9 @@ func toFixed(num float64, precision int) float64 {
 	return float64(round(num * output)) / output
 }
 
+/**
+	Compute granularity dynamically
+ */
 func DynamicGranularity(number int) {
 	// sort the count map based on the key
 	intervals := make([]float64, 0)
@@ -79,7 +79,7 @@ func DynamicGranularity(number int) {
 	tempGran = append(tempGran, maxObjSize)
 	updateUpperBound(tempGran)
 
-	fmt.Printf("Granularity is updated. Current granularity is: %v.\n", tempGran)
+	//fmt.Printf("Granularity is updated. Current granularity is: %v.\n", tempGran)
 	granularity = tempGran
 }
 
@@ -89,22 +89,6 @@ func updateUpperBound(tempGran []int64) {
 		box := openBoxes[value]
 		box.upperBound = tempGran[index]
 		newOpenBoxes[tempGran[index]] = box
-
-		//if value != tempGran[index] {
-		//	box := openBoxes[value]
-		//	box.upperBound = tempGran[index]
-		//	newOpenBoxes[tempGran[index]] = box
-		//	//openBoxes[tempGran[index]] = box
-		//	//delete(openBoxes, value)
-		//}
-
-		//box := openBoxes[value]
-		//box.upperBound = tempGran[index]
-		//openBoxes[tempGran[index]] = box
-		//
-		//if value != tempGran[index] {
-		//	delete(openBoxes, value)
-		//}
 	}
 	openBoxes = newOpenBoxes
 	//fmt.Println("Open boxes are updated. ", openBoxes)

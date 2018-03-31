@@ -4,8 +4,8 @@ import (
 	"container/list"
 	"strconv"
 	"fmt"
-	"math"
 )
+
 const maxBoxSize = 104857600		// 100 MB
 const Epoch = 1000000				// 1 million
 
@@ -26,10 +26,16 @@ type QueuePos struct {
 	hot     bool          // in hot queue or not
 }
 
+type AccessCount struct {
+	objectId 		string
+}
+
 type GhostCache struct {
+	maxSize			int64
 	currSize		int64
-	accessCount		map[string]int
+	accessCount		map[string]int	// map. object id --> access count
 	queue 			*list.List		// when ghost cache is full, evict some objects.
+	objQueueMap		map[string]*list.Element
 }
 
 var (
@@ -43,21 +49,16 @@ var (
 	openBoxes		map[int64]*Box	// upper bound --> open boxes
 	nextBoxId		int64				// record next box Id
 	maxObjSize		int64
-	// object id --> box id. For speeding up the code. Only the objects cached in the flash can be added into this map.
-	// Similarly, if one box is evicted from cold queue, then the objects in that box need to be removed from the map.
-	cachedObj		map[string]int64
+	cachedObj		map[string]int64 	// object id --> box id
 
-	// new
-	validBoxes		map[int64]bool
-
-	// experiment part
+	/* experiment part */
 	numSeal			int64				// number of sealed boxes
 	numRequest		int64 				// number of request
 	hits			int64				// number of hits
 	hitBytes		int64
 	reqBytes		int64
 
-	// over time
+	/* over time */
 	//MissBytes				int64
 	fragRatio 				float64
 	SealedBoxRatioTime		[]float64		// how sealed box ratio varies with time
@@ -67,8 +68,20 @@ var (
 	MissBytesRatioTime		[]float64
 
 
-	// dynamic granularity
+	/* dynamic granularity */
 	count					map[float64]int		// map from power --> number of objects
+
+	/* TIRE */
+	ghostCache   *GhostCache
+	quota        int64			// quota for each quantum
+	quantum      int			// 5 min --> 1 million requests
+	K            int			// slack variable
+	intervals    []int
+	threshold    int
+	currInterval int
+	// update every quantum
+	E			int64 		// written bytes in this quantum --> real-time
+	balance		int64		// balance in all past quantum --> accumulative
 
 )
 
@@ -80,7 +93,8 @@ var (
 	Then four boxes are created, and they are supposed to hold objects 0 ~ 1024 Bytes,
 	1024 ~ 2048 Bytes, 2048 ~ 4096 Bytes and 4096 ~ 100000 Bytes separately.
  */
-func StartUp(cacheSize int64, number int, log bool, objSize int64, statPath string) {
+func StartUp(cacheSize int64, number int, objSize int64) {
+//func StartUp(cacheSize int64, number int, log bool, objSize int64, statPath string) {
 	fmt.Println("Modularized test.")
 	maxCacheSize = cacheSize / 2
 	maxObjSize = objSize
@@ -91,18 +105,7 @@ func StartUp(cacheSize int64, number int, log bool, objSize int64, statPath stri
 	coldSize = 0
 	nextBoxId = 1
 	openBoxes = make(map[int64]*Box, number)
-	if log {
-		granularity = EqualLogGranularity(uint(number))
-	} else {
-		intervals := YaxisGranularity(number, statPath)
-		granularity = make([]int64, 0)
-		for index, num := range intervals {
-			if index != len(intervals) - 1 {
-				granularity = append(granularity, int64(math.Pow(10, num)))
-			}
-		}
-		granularity = append(granularity, maxObjSize)
-	}
+	granularity = EqualLogGranularity(uint(number))
 	fmt.Println(granularity)
 	boxQueueMap = make(map[int64]*QueuePos)
 	for _, upperBound := range granularity {
@@ -123,6 +126,36 @@ func StartUp(cacheSize int64, number int, log bool, objSize int64, statPath stri
 	timeSetUp()
 }
 
+/**
+	Set up the ghost cache.
+ */
+func GhoseCacheSetUp(size int64) {
+	ghostCache = &GhostCache{
+		accessCount: 	make(map[string]int),
+		currSize: 		0,
+		maxSize: 		size / 8,
+		queue:			list.New(),
+		objQueueMap: 	make(map[string]*list.Element),
+	}
+}
+
+func TireSetUp(interval int, k int, bal int64, q int64, quan int) {
+	K = k
+	intervals = make([]int, 0)
+	intervals = append(intervals, 1)
+	base := (K - 1) / interval
+	for n := 1; n <= interval; n++ {
+		intervals = append(intervals, 1 + n * base)
+	}
+	DFmtPrintf("TireSetUp:: intervals: %v.\n", intervals)
+	balance = bal
+	quota = q
+	quantum = quan
+	E = 0
+	threshold = 0		// admit everything at the beginning
+	currInterval = 1
+}
+
 func basicSetUp() {
 	numSeal = 0
 	numRequest = 0
@@ -131,7 +164,6 @@ func basicSetUp() {
 	hitBytes = 0
 	reqBytes = 0
 	cachedObj = make(map[string]int64)
-	validBoxes = make(map[int64]bool)
 	count = make(map[float64]int)
 }
 
@@ -153,6 +185,9 @@ func Request(id string, size string) {
 	DPrintf("Request:: request object %s with size %s.\n", id, size)
 	numRequest++
 	collectStat(size)		// dynamic granularity
+
+	updateTire()
+
 	getResultsWithTime()
 	// convert size into integer
 	object, err := strconv.Atoi(size)
@@ -181,15 +216,24 @@ func Request(id string, size string) {
 		if isSealed {
 			// object is found in cache
 			cachedObject(objectSize, id, boxId)
+			updateGhostQueue(id, true)
 		} else {
 			// Object is not cached. Add it to corresponding open box.
 			//MissBytes += objectSize
+
+			// check whether this object can be cached or not
+			admit := admissionControl(id, objectSize)
+			if !admit {
+				return
+			}
+			updateGhostQueue(id, false)
 			addToOpenBox(openBox, objectSize, bound, id)
 		}
 	} else {
 		// in open boxes
 		hits++
 		hitBytes += objectSize
+		updateGhostQueue(id, true)
 	}
 
 }
@@ -356,6 +400,92 @@ func getBound(size int64) int64 {
 }
 
 /**
+	When one quantum finishes, need to calculate balance to determine whether this quantum is allowed to cache some objects
+	Besides, reset the erasure bytes (E) and current interval (to 1)
+ */
+func updateTire() {
+	if numRequest % Epoch == 0 {
+		DFmtPrintf("\n")
+		DFmtPrintf("updateTire:: Number of requests: %d, last quantum: interval: %d, written bytes: %d. ", numRequest, currInterval, E)
+		balance += quota - E
+		DFmtPrintf("Current balance: %d.\n", balance)
+		if balance <= 0 {
+			threshold = -1
+			DFmtPrintf("updateTire:: Number of requests: %d. No insertion, wait until next quantum.\n", numRequest)
+		} else {
+			if currInterval <= intervals[1] {
+				threshold = 0
+			} else if currInterval <= intervals[len(intervals) - 2] {
+				threshold = currInterval - 1
+			} else {
+				threshold = -1
+			}
+		}
+		// reset erasure bytes and current interval
+		E = 0
+		currInterval = 1
+	}
+}
+
+/**
+	admission control --> return whether this object can be admit or not
+ */
+func admissionControl(id string, size int64) bool {
+	admit := false
+	if threshold != -1 {
+		// some objects are allowed to cache during this quantum --> check written bytes during this quantum
+		if currInterval <= intervals[1] {
+			admit = true
+		} else {
+			accCount, ok := ghostCache.accessCount[id]
+			if ok {
+				if accCount >= threshold {
+					admit = true
+				} else {
+					admit = false
+				}
+				accCount++
+			} else {
+				accCount = 1
+				admit = false
+			}
+			ghostCache.accessCount[id] = accCount // update access counter
+		}
+
+		// update current interval and threshold
+		if admit {
+			E += size
+			if E > int64(currInterval) * quota {
+				currInterval++
+				threshold++
+			}
+		}
+	}
+	return admit
+}
+
+/**
+	update the LRU list in ghost cache. When ghost cache is full, remove the object in LRU position of the queue.
+	Then remove or add this object to the MRU position of the queue.
+ */
+func updateGhostQueue(id string, exist bool) {
+	if ghostCache.currSize >= ghostCache.maxSize {
+		delete(ghostCache.objQueueMap, ghostCache.queue.Front().Value.(*AccessCount).objectId)
+		ghostCache.queue.Remove(ghostCache.queue.Front())
+		ghostCache.currSize--
+	}
+
+	if exist {
+		ghostCache.queue.Remove(ghostCache.objQueueMap[id])
+		ghostCache.currSize--
+	}
+	ghostCache.queue.PushBack(&AccessCount{id})
+	ghostCache.objQueueMap[id] = ghostCache.queue.Back()
+	ghostCache.currSize++
+	//DFmtPrintf("updateGhostQueue:: current queue size: %d.\n", ghostCache.queue.Len())
+}
+
+/**
 	Return experiment results
 	1. WCR: waste cache ratio, percentage of wasted space --> bytes of fragmentation / total used cache size
 	2. SBRR: sealed box request ratio, #sealed boxes / #requests
@@ -391,4 +521,8 @@ func getResultsWithTime() {
 		HitBytesRatioTime = append(HitBytesRatioTime, float64(hitBytes) / float64(reqBytes))
 		//MissBytesRatioTime = append(MissBytesRatioTime, float64(MissBytes) / float64(reqBytes))
 	}
+}
+
+func GetLength() int {
+	return ghostCache.queue.Len()
 }
