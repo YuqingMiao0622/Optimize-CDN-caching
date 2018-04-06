@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const flag = 0
+const flag = 2
 
 var (
 	log_file, _ = os.OpenFile("logger.txt", os.O_CREATE | os.O_RDWR | os.O_TRUNC, 0)

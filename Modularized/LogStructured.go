@@ -4,6 +4,9 @@ import (
 	"container/list"
 	"strconv"
 	"fmt"
+	"math"
+	"strings"
+	"math/rand"
 )
 
 const maxBoxSize = 104857600		// 100 MB
@@ -180,13 +183,17 @@ func timeSetUp() {
 /**
 	Deal with new command.
  */
-func Request(id string, size string) {
+func Request(id string, size string, model string) {
 	//fmt.Printf("New request: %s with size %s.\n", id, size)
 	DPrintf("Request:: request object %s with size %s.\n", id, size)
 	numRequest++
 	collectStat(size)		// dynamic granularity
 
-	updateTire()
+	if strings.Compare(model, "TIRE") == 0 {
+		updateTire()
+	} else {
+		updateProb()
+	}
 
 	getResultsWithTime()
 	// convert size into integer
@@ -222,7 +229,13 @@ func Request(id string, size string) {
 			//MissBytes += objectSize
 
 			// check whether this object can be cached or not
-			admit := admissionControl(id, objectSize)
+			var admit bool
+			if strings.Compare(model, "TIRE") == 0 {
+				admit = admissionControlTIRE(id, objectSize)
+			} else {
+				admit = admissionControlProb(model, objectSize)
+			}
+
 			if !admit {
 				return
 			}
@@ -428,9 +441,9 @@ func updateTire() {
 }
 
 /**
-	admission control --> return whether this object can be admit or not
+	admission control using TIRE --> return whether this object can be admit or not
  */
-func admissionControl(id string, size int64) bool {
+func admissionControlTIRE(id string, size int64) bool {
 	admit := false
 	if threshold != -1 {
 		// some objects are allowed to cache during this quantum --> check written bytes during this quantum
@@ -483,6 +496,67 @@ func updateGhostQueue(id string, exist bool) {
 	ghostCache.objQueueMap[id] = ghostCache.queue.Back()
 	ghostCache.currSize++
 	//DFmtPrintf("updateGhostQueue:: current queue size: %d.\n", ghostCache.queue.Len())
+}
+
+/**
+	Reset the erasure bytes when one quantum finishes.
+ */
+func updateProb() {
+	if numRequest % Epoch == 0 {
+		DFmtPrintf("updateProb:: Requests: %d, erasure bytes during last quantum: %d.\n", numRequest, E)
+		E = 0;
+	}
+}
+
+/**
+	Admission control using probability. Three probability distributions can be used.
+	Lame duck: line
+	Spicy chicken: exponential
+	Angry bird: logarithm
+ */
+func admissionControlProb(line string, size int64) bool {
+	var prob float64
+	if strings.Compare(line, "lameDuck") == 0 {
+		prob = lameDuck()
+	} else if strings.Compare(line, "spicyChicken") == 0 {
+		prob = spicyChicken()
+	} else if strings.Compare(line, "angryBird") == 0 {
+		prob = angryBird()
+	}
+
+	random := rand.Float64()
+	var admit bool
+	admit = random <= prob
+	if admit {
+		E += size
+	}
+	//DFmtPrintf("admissionControlProb:: requests: %d, prob: %f, random: %f, admit: %t.\n", numRequest, prob, random, admit)
+	return admit
+}
+
+/**
+	Probability: line
+ */
+func lameDuck() float64 {
+	prob := -1 / float64(4 * quota) * float64(E) + 1;
+	return prob
+}
+
+/**
+	Probability: exponential
+ */
+func spicyChicken() float64 {
+	prob := math.Exp(float64(-E) / float64(quota))
+	return prob
+}
+
+/**
+	Probability: logarithm
+ */
+func angryBird() float64 {
+	prob := math.Log(float64(K + 1) - float64(E) / float64(quota)) / math.Log(5)
+	//prob := math.Log(float64(E - int64(K) * quota))
+	return prob
 }
 
 /**
