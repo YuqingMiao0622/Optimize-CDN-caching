@@ -79,7 +79,7 @@ func DynamicGranularity(number int) {
 	tempGran = append(tempGran, maxObjSize)
 	updateUpperBound(tempGran)
 
-	DFmtPrintf("DynamicGranularity:: Request: %d. Current granularity is: %v.\n", numRequest, tempGran)
+	//DFmtPrintf("DynamicGranularity:: Request: %d. Current granularity is: %v.\n", numRequest, tempGran)
 	granularity = tempGran
 }
 

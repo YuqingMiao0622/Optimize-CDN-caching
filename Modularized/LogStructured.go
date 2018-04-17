@@ -4,10 +4,6 @@ import (
 	"container/list"
 	"strconv"
 	"fmt"
-	"math"
-	"strings"
-	"math/rand"
-	"log"
 )
 
 const maxBoxSize = 104857600		// 100 MB
@@ -74,20 +70,6 @@ var (
 
 	/* dynamic granularity */
 	count					map[float64]int		// map from power --> number of objects
-
-	/* TIRE */
-	ghostCache   *GhostCache
-	quota        int64			// quota for each quantum
-	quantum      int			// 5 min --> 1 million requests
-	K            int			// slack variable
-	intervals    []int
-	threshold    int
-	currInterval int
-
-	// update every quantum
-	E			int64 		// written bytes in this quantum --> real-time
-	balance		int64		// balance in all past quantum --> accumulative
-
 )
 
 /**
@@ -131,43 +113,6 @@ func StartUp(cacheSize int64, number int, objSize int64) {
 	timeSetUp()
 }
 
-/**
-	Set up the ghost cache.
- */
-func GhoseCacheSetUp(size int64) {
-	ghostCache = &GhostCache{
-		accessCount: 	make(map[string]int),
-		currSize: 		0,
-		maxSize: 		size / 8,
-		queue:			list.New(),
-		objQueueMap: 	make(map[string]*list.Element),
-	}
-}
-
-func TireSetUp(interval int, k int, bal int64, q int64, quan int) {
-	K = k
-	intervals = make([]int, 0)
-	intervals = append(intervals, 1)
-	base := (K - 1) / interval
-	for n := 1; n <= interval; n++ {
-		intervals = append(intervals, 1 + n * base)
-	}
-	DFmtPrintf("TireSetUp:: intervals: %v.\n", intervals)
-	balance = bal
-	quota = q
-	quantum = quan
-	E = 0
-	threshold = 0		// admit everything at the beginning
-	currInterval = 1
-}
-
-func ProbSetUp(k int, budget int64) {
-	K = k;					// slack variable
-	balance = budget;		// budget
-	quota = budget;			// initial budget
-	E = 0;					// used writes
-}
-
 func basicSetUp() {
 	numSeal = 0
 	numRequest = 0
@@ -204,6 +149,7 @@ func Request(id string, size string, model string) {
 	//	//updateProb()
 	//	updateImprovedProb()
 	//}
+	updateFixedProb(model)
 
 	getResultsWithTime()
 	// convert size into integer
@@ -233,12 +179,14 @@ func Request(id string, size string, model string) {
 		if isSealed {
 			// object is found in cache
 			cachedObject(objectSize, id, boxId)
-			updateGhostQueue(id, true)
+			//updateGhostQueue(id, true)
 		} else {
 			// Object is not cached. Add it to corresponding open box.
+
 			//MissBytes += objectSize
 
 			// check whether this object can be cached or not
+			/*
 			var admit bool
 			if strings.Compare(model, "TIRE") == 0 {
 				admit = admissionControlTIRE(id, objectSize)
@@ -250,14 +198,19 @@ func Request(id string, size string, model string) {
 			if !admit {
 				return
 			}
-			updateGhostQueue(id, false)
+			*/
+
+			if !warmUpFixedProb(model, objectSize) {
+				return
+			}
+			//updateGhostQueue(id, false)
 			addToOpenBox(openBox, objectSize, bound, id)
 		}
 	} else {
 		// in open boxes
 		hits++
 		hitBytes += objectSize
-		updateGhostQueue(id, true)
+		//updateGhostQueue(id, true)
 	}
 
 }
@@ -421,227 +374,6 @@ func getBound(size int64) int64 {
 		}
 	}
 	return result
-}
-
-/**
-	When one quantum finishes, need to calculate balance to determine whether this quantum is allowed to cache some objects
-	Besides, reset the erasure bytes (E) and current interval (to 1)
- */
-func updateTire() {
-	if numRequest % Epoch == 0 {
-		DFmtPrintf("\n")
-		DFmtPrintf("updateTire:: Number of requests: %d, last quantum: interval: %d, written bytes: %d. ", numRequest, currInterval, E)
-		balance += quota - E
-		DFmtPrintf("Current balance: %d.\n", balance)
-		if balance <= 0 {
-			threshold = -1
-			DFmtPrintf("updateTire:: Number of requests: %d. No insertion, wait until next quantum.\n", numRequest)
-		} else {
-			if currInterval <= intervals[1] {
-				threshold = 0
-			} else if currInterval <= intervals[len(intervals) - 2] {
-				threshold = currInterval - 1
-			} else {
-				threshold = -1
-			}
-		}
-		// reset erasure bytes and current interval
-		E = 0
-		currInterval = 1
-	}
-}
-
-/**
-	admission control using TIRE --> return whether this object can be admit or not
- */
-func admissionControlTIRE(id string, size int64) bool {
-	admit := false
-	if threshold != -1 {
-		// some objects are allowed to cache during this quantum --> check written bytes during this quantum
-		if currInterval <= intervals[1] {
-			admit = true
-		} else {
-			accCount, ok := ghostCache.accessCount[id]
-			if ok {
-				if accCount >= threshold {
-					admit = true
-				} else {
-					admit = false
-				}
-				accCount++
-			} else {
-				accCount = 1
-				admit = false
-			}
-			ghostCache.accessCount[id] = accCount // update access counter
-		}
-
-		// update current interval and threshold
-		if admit {
-			E += size
-			if E > int64(currInterval) * quota {
-				currInterval++
-				threshold++
-			}
-		}
-	}
-	return admit
-}
-
-/**
-	update the LRU list in ghost cache. When ghost cache is full, remove the object in LRU position of the queue.
-	Then remove or add this object to the MRU position of the queue.
- */
-func updateGhostQueue(id string, exist bool) {
-	if ghostCache.currSize >= ghostCache.maxSize {
-		delete(ghostCache.objQueueMap, ghostCache.queue.Front().Value.(*AccessCount).objectId)
-		ghostCache.queue.Remove(ghostCache.queue.Front())
-		ghostCache.currSize--
-	}
-
-	if exist {
-		ghostCache.queue.Remove(ghostCache.objQueueMap[id])
-		ghostCache.currSize--
-	}
-	ghostCache.queue.PushBack(&AccessCount{id})
-	ghostCache.objQueueMap[id] = ghostCache.queue.Back()
-	ghostCache.currSize++
-	//DFmtPrintf("updateGhostQueue:: current queue size: %d.\n", ghostCache.queue.Len())
-}
-
-/**
-	Reset the erasure bytes when one quantum finishes.
- */
-func updateProb() {
-	if numRequest % Epoch == 0 {
-		DFmtPrintf("updateProb:: Requests: %d, erasure bytes during last quantum: %d.\n", numRequest, E)
-		E = 0;
-	}
-}
-
-/**
-	Update budget for current interval and reset the used bytes to 0 when one interval finishes.
- */
-func updateImprovedProb() {
-	if numRequest % Epoch == 0 {
-		DFmtPrintf("updateImprovedProb:: Requests: %d, used bytes: %d, last balance: %d.\n", numRequest, E, balance)
-		balance += quota - E
-		E = 0
-	}
-}
-
-/**
-	Check whether current request is in warm up phase.
-	Warm up phase: there is no budget for the first 250 million requests.
-	Return true if current request is within the warm up phase. Otherwise, use the improved probability
-	admission control to determine whether this missed object is cached or not.
- */
-func warmUpPhase(line string, size int64) bool {
-	if numRequest <= 250 * Epoch {
-		return true
-	} else {
-		updateImprovedProb()
-		return admissionControlImprovedProb(line, size)
-	}
-}
-
-
-/**
-	Combine probability admission control with TIRE "penalty" across time.
-*/
-func admissionControlImprovedProb(line string, size int64) bool {
-	var prob float64
-	if strings.Compare(line, "lameDuck") == 0 {
-		prob = improvedLameDuck()
-	} else if strings.Compare(line, "angryBird") == 0 {
-		prob = improvedAngryBird()
-	} else {
-		log.Fatalf("Wrong choice of probability. Should be lameDuck or angryBird!")
-	}
-
-	random := rand.Float64()
-	var admit bool
-	admit = random <= prob
-	if admit {
-		E += size
-	}
-	//DFmtPrintf("admissioControlImprovedProb:: prob: %f, random: %f, admit: %t.\n", prob, random, admit)
-	return admit
-}
-
-
-/**
-	Admission control using probability. Three probability distributions can be used.
-	Lame duck: line
-	Spicy chicken: exponential
-	Angry bird: logarithm
- */
-func admissionControlProb(line string, size int64) bool {
-	var prob float64
-	if strings.Compare(line, "lameDuck") == 0 {
-		prob = lameDuck()
-	} else if strings.Compare(line, "spicyChicken") == 0 {
-		prob = spicyChicken()
-	} else if strings.Compare(line, "angryBird") == 0 {
-		prob = angryBird()
-	}
-
-	random := rand.Float64()
-	var admit bool
-	admit = random <= prob
-	if admit {
-		E += size
-	}
-	//DFmtPrintf("admissionControlProb:: requests: %d, prob: %f, random: %f, admit: %t.\n", numRequest, prob, random, admit)
-	return admit
-}
-
-/**
-	Probability: line
- */
-func lameDuck() float64 {
-	prob := -1 / float64(int64(K) * quota) * float64(E) + 1;
-	return prob
-}
-
-/**
-	Improved probability: the budget varies with intervals --> line
- */
-func improvedLameDuck() float64 {
-	var prob float64
-	if balance <= 0 {
-		prob = 0
-	} else {
-		prob = -1 / float64(int64(K) * balance) * float64(E) + 1;
-	}
-	return prob
-}
-
-/**
-	Probability: exponential
- */
-func spicyChicken() float64 {
-	prob := math.Exp(float64(-E) / float64(quota))
-	return prob
-}
-
-/**
-	Probability: logarithm
- */
-func angryBird() float64 {
-	prob := math.Log(float64(K + 1) - float64(E) / float64(quota)) / math.Log(5)
-	//prob := math.Log(float64(E - int64(K) * quota))
-	return prob
-}
-
-func improvedAngryBird() float64 {
-	var prob float64
-	if balance <= 0 {
-		prob = 0
-	} else {
-		prob = math.Log(float64(K + 1) - float64(E) / float64(quota)) / math.Log(5)
-	}
-	return prob
 }
 
 /**
