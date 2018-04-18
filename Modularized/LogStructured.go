@@ -66,6 +66,7 @@ var (
 	HitRatioTime			[]float64		// how hit ratio varies with time
 	HitBytesRatioTime		[]float64
 	MissBytesRatioTime		[]float64
+	NumberOfRequests		[]int64
 
 
 	/* dynamic granularity */
@@ -80,7 +81,7 @@ var (
 	Then four boxes are created, and they are supposed to hold objects 0 ~ 1024 Bytes,
 	1024 ~ 2048 Bytes, 2048 ~ 4096 Bytes and 4096 ~ 100000 Bytes separately.
  */
-func StartUp(cacheSize int64, number int, objSize int64) {
+func StartUp(cacheSize int64, number int, objSize int64, quota int64) {
 //func StartUp(cacheSize int64, number int, log bool, objSize int64, statPath string) {
 	fmt.Println("Modularized test.")
 	maxCacheSize = cacheSize / 2
@@ -111,6 +112,10 @@ func StartUp(cacheSize int64, number int, objSize int64) {
 
 	// new graph
 	timeSetUp()
+
+	//AngryBearSetUp(quota)
+
+	ProbSetUp(quota)
 }
 
 func basicSetUp() {
@@ -130,8 +135,8 @@ func timeSetUp() {
 	SealedBoxNumber = make([]int64, 0)
 	HitBytesRatioTime = make([]float64, 0)
 	MissBytesRatioTime = make([]float64, 0)
-	//MissBytes = 0
 	fragRatio = 0
+	NumberOfRequests = make([]int64, 0)
 }
 
 /**
@@ -143,15 +148,18 @@ func Request(id string, size string, model string) {
 	numRequest++
 	collectStat(size)		// dynamic granularity
 
-	//if strings.Compare(model, "TIRE") == 0 {
-	//	updateTire()
-	//} else {
-	//	//updateProb()
-	//	updateImprovedProb()
-	//}
-	updateFixedProb(model)
+	//updateFixedProb(model)
+	//updateAvgProb()
+	updateImprovedProb()
 
-	getResultsWithTime()
+
+	if numRequest < 250 * Epoch {
+		getResultsWithTime()
+	} else {
+		//updateTire()
+		getResultsWithTimeFineGrain()
+	}
+
 	// convert size into integer
 	object, err := strconv.Atoi(size)
 	objectSize := int64(object)
@@ -199,10 +207,23 @@ func Request(id string, size string, model string) {
 				return
 			}
 			*/
-
-			if !warmUpFixedProb(model, objectSize) {
+			totalMiss += objectSize
+			if !warmUpImprovedProb(model, objectSize) {
 				return
 			}
+
+			//if !warmUpTIRE(id, objectSize) {
+			//	return
+			//}
+
+			//if !warmUpAngryBear(objectSize) {
+			//	return
+			//}
+
+			//if !warmUpFixedProb(model, objectSize) {
+			//	return
+			//}
+			admitMiss += objectSize
 			//updateGhostQueue(id, false)
 			addToOpenBox(openBox, objectSize, bound, id)
 		}
@@ -406,6 +427,7 @@ func GetResults() (float64, float64, float64, float64) {
 func getResultsWithTime() {
 	if numRequest % Epoch == 0 {
 		DPrintf("ResultsWithTime:: current number of requests is %d.\n", numRequest)
+		NumberOfRequests = append(NumberOfRequests, numRequest)
 		SealedBoxRatioTime = append(SealedBoxRatioTime, float64(numSeal) / float64(numRequest))
 		SealedBoxNumber = append(SealedBoxNumber, numSeal)
 		HitRatioTime = append(HitRatioTime, float64(hits) / float64(numRequest))

@@ -1,6 +1,8 @@
 package ObjectBased
 
-import "container/list"
+import (
+	"container/list"
+)
 
 var(
 	/* TIRE */
@@ -106,6 +108,13 @@ func admissionControlTIRE(id string, size int64) bool {
 		}
 	}
 	return admit
+}
+
+func warmUpTIRE(id string, size int64) bool {
+	if numRequest / Epoch < 250 {
+		return true
+	}
+	return admissionControlTIRE(id, size)
 }
 
 /**

@@ -13,8 +13,8 @@ var (
 	balance		int64		// balance in all past quantum --> accumulative
 )
 
-func ProbSetUp(k int, budget int64) {
-	K = k;					// slack variable
+func ProbSetUp(budget int64) {
+	//K = k;					// slack variable
 	balance = budget;		// budget
 	quota = budget;			// initial budget
 	E = 0;					// used writes
@@ -34,10 +34,11 @@ func updateProb() {
 	Update budget for current interval and reset the used bytes to 0 when one interval finishes.
  */
 func updateImprovedProb() {
-	if numRequest % Epoch == 0 {
+	if numRequest % Epoch == 0 && numRequest >= 250 * Epoch {
 		DFmtPrintf("updateImprovedProb:: Requests: %d, used bytes: %d, last balance: %d.\n", numRequest, E, balance)
 		balance += quota - E
 		E = 0
+		DFmtPrintf("updateImprovedProb:: current balance: %d.\n", balance)
 	}
 }
 
@@ -47,12 +48,12 @@ func updateImprovedProb() {
 	Return true if current request is within the warm up phase. Otherwise, use the improved probability
 	admission control to determine whether this missed object is cached or not.
  */
-func warmUpPhase(line string, size int64) bool {
-	if numRequest <= 250 * Epoch {
+func warmUpImprovedProb(model string, size int64) bool {
+	if numRequest < 250 * Epoch {
 		return true
 	} else {
-		updateImprovedProb()
-		return admissionControlImprovedProb(line, size)
+		//updateImprovedProb()
+		return admissionControlImprovedProb(model, size)
 	}
 }
 
@@ -60,11 +61,14 @@ func warmUpPhase(line string, size int64) bool {
 /**
 	Combine probability admission control with TIRE "penalty" across time.
 */
-func admissionControlImprovedProb(line string, size int64) bool {
+func admissionControlImprovedProb(model string, size int64) bool {
+	if E > balance {
+		return false
+	}
 	var prob float64
-	if strings.Compare(line, "lameDuck") == 0 {
+	if strings.Compare(model, "lameDuck") == 0 {
 		prob = improvedLameDuck()
-	} else if strings.Compare(line, "angryBird") == 0 {
+	} else if strings.Compare(model, "angryBird") == 0 {
 		prob = improvedAngryBird()
 	} else {
 		log.Fatalf("Wrong choice of probability. Should be lameDuck or angryBird!")
@@ -150,7 +154,8 @@ func improvedAngryBird() float64 {
 	if balance <= 0 {
 		prob = 0
 	} else {
-		prob = math.Log(float64(K + 1) - float64(E) / float64(quota)) / math.Log(5)
+		prob = math.Log(float64(balance) - float64(E)) / math.Log(float64(balance))
+		//prob = math.Log(float64(K + 1) - float64(E) / float64(quota)) / math.Log(5)
 	}
 	return prob
 }

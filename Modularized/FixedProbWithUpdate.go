@@ -72,10 +72,6 @@ func warmUpFixedProb(method string, size int64) bool {
 	if numRequest < 250 * Epoch {
 		return true
 	} else {
-		//if numRequest % Epoch == 0 {
-		//	DFmtPrintf("warmUpFixedProb:: number of requests: %d.\n", numRequest)
-		//	updateFixedProb(method)
-		//}
 		return admissionControlFixedProb(size)
 	}
 }
